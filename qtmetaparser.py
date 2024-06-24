@@ -1,34 +1,39 @@
+# Qt5 Ida pro 8.3 portable
+#Python 3.11.7 (tags/v3.11.7:fa7a6f2, Dec  4 2023, 19:24:49) [MSC v.1937 64 bit (AMD64)] 
+#IDAPython v7.4.0 final (serial 0) (c) The IDAPython Team <idapython@googlegroups.com>
 
-from idc import *
-from idaapi import offflag
+# handle static metaObject
+import idc
+import ida_bytes
 
 
-if __EA64__:
-    ARCH_F = FF_QWRD | FF_DATA
+if idc.__EA64__:
+    ARCH_F = ida_bytes.FF_QWORD | FF_DATA
 else:
-    ARCH_F = FF_DWRD | FF_DATA
+    ARCH_F = ida_bytes.FF_DWORD | FF_DATA
 
 
 def struct_adder(cls, mapper):
-    if GetStrucIdByName(cls.__name__) == BADADDR:
-        idx = GetLastStrucIdx() + 1
-        sid = AddStruc(idx, cls.__name__)
+    if ida_struct.get_struc_id(cls.__name__) == BADADDR:
+        # idx = GetLastStrucIdx() + 1
+        idx = -1
+        sid = idc.add_struc(idx, cls.__name__, 0)
         cls.sid = sid
         for member in mapper:
             type_flag = member[1]
-            if isOff0(type_flag):
-                reftype = REF_OFF64 if isQwrd(ARCH_F) else REF_OFF32
-                AddStrucMember(sid, member[0], -1, type_flag, 0, get_bytes_size(type_flag), reftype=reftype)
+            if ida_bytes.is_off0(type_flag):
+                reftype = REF_OFF64 if ida_bytes.is_qword(ARCH_F) else REF_OFF32
+                idc.add_struc_member(sid, member[0], -1, type_flag, 0, get_bytes_size(type_flag), reftype=reftype)
             else:
-                AddStrucMember(sid, member[0], -1, type_flag, -1, get_bytes_size(type_flag))
+                idc.add_struc_member(sid, member[0], -1, type_flag, -1, get_bytes_size(type_flag))
     else:
-        cls.sid = GetStrucIdByName(cls.__name__)
+        cls.sid = ida_struct.get_struc_id(cls.__name__)
 
 
 def struct_maker(obj, off):
     struct_adder(obj.__class__, obj.c_struct)
-    MakeUnknown(off, GetStrucSize(obj.__class__.sid), DOUNK_EXPAND)
-    MakeStruct(off, GetStrucName(obj.__class__.sid))
+    ida_bytes.del_items(off, ida_struct.get_struc_size(obj.__class__.sid), ida_bytes.DELIT_EXPAND)
+    idc.create_struct(off, -1, ida_struct.get_struc_name(obj.__class__.sid))
 
 
 # noinspection PyPep8Naming
@@ -68,20 +73,20 @@ QMetaMethod QMetaObject::method(int index) const
 
 
 """
-    c_struct = [("revision", FF_DATA | FF_DWRD),
-                ("className", FF_DATA | FF_DWRD),
-                ("classInfoCount", FF_DATA | FF_DWRD),
-                ("classInfoData", FF_DATA | FF_DWRD),
-                ("methodCount", FF_DATA | FF_DWRD),
-                ("methodData", FF_DATA | FF_DWRD),
-                ("propertyCount", FF_DATA | FF_DWRD),
-                ("propertyData", FF_DATA | FF_DWRD),
-                ("enumeratorCount", FF_DATA | FF_DWRD),
-                ("enumeratorData", FF_DATA | FF_DWRD),
-                ("constructorCount", FF_DATA | FF_DWRD),
-                ("constructorData", FF_DATA | FF_DWRD),
-                ("flags", FF_DATA | FF_DWRD),
-                ("signalCount", FF_DATA | FF_DWRD)]
+    c_struct = [("revision", FF_DATA | ida_bytes.FF_DWORD),
+                ("className", FF_DATA | ida_bytes.FF_DWORD),
+                ("classInfoCount", FF_DATA | ida_bytes.FF_DWORD),
+                ("classInfoData", FF_DATA | ida_bytes.FF_DWORD),
+                ("methodCount", FF_DATA | ida_bytes.FF_DWORD),
+                ("methodData", FF_DATA | ida_bytes.FF_DWORD),
+                ("propertyCount", FF_DATA | ida_bytes.FF_DWORD),
+                ("propertyData", FF_DATA | ida_bytes.FF_DWORD),
+                ("enumeratorCount", FF_DATA | ida_bytes.FF_DWORD),
+                ("enumeratorData", FF_DATA | ida_bytes.FF_DWORD),
+                ("constructorCount", FF_DATA | ida_bytes.FF_DWORD),
+                ("constructorData", FF_DATA | ida_bytes.FF_DWORD),
+                ("flags", FF_DATA | ida_bytes.FF_DWORD),
+                ("signalCount", FF_DATA | ida_bytes.FF_DWORD)]
 
     # todo: when superdata is not null
     def __init__(self, offset, str_data):
@@ -97,7 +102,7 @@ ConstructorCount: %d SignalCount: %d""" % (str_data[self.className].string,
         # S = 'ExtLinB(%d, 0, "%s")' % (offset, cmmt)
         # print(S)
         # idaapi.run_statements(S)
-        MakeComm(offset, cmmt)
+        idc.set_cmt(offset, cmmt, 0)
 
 def displayMetaData(data_addr):
     parser = QtMetaParser(data_addr)
@@ -114,17 +119,17 @@ class QtMetaParser:
         self.qmeta_obj_pri = QMetaObjectPrivate(self.d.data, self.str_data)
         class_name = self.str_data[self.qmeta_obj_pri.className].string
         class_spc = class_name + "::"
-        MakeName(d_offset, class_name)
-        MakeName(self.d.stringdata, class_spc + "stringdata")
-        MakeName(self.d.data, class_spc + "data")
-        if not Name(self.d.metacall).startswith("nullsub"):
-            MakeName(self.d.metacall, class_spc + "metacall")
+        idc.set_name(d_offset, class_name, SN_CHECK)
+        idc.set_name(self.d.stringdata, class_spc + "stringdata", SN_CHECK)
+        idc.set_name(self.d.data, class_spc + "data", SN_CHECK)
+        if not idc.get_name(self.d.metacall, ida_name.GN_VISIBLE).startswith("nullsub"):
+            idc.set_name(self.d.metacall, class_spc + "metacall", SN_CHECK)
 
     @staticmethod
     def get_str_data(str_off):
         start = str_off
         str_data = []
-        while Dword(start) == 0xFFFFFFFF and Dword(start + 8) == 0:
+        while idc.get_wide_dword(start) == 0xFFFFFFFF and idc.get_wide_dword(start + 8) == 0:
             str_data.append(QArrayData(start))
             start += QArrayData.size
         return str_data
@@ -144,11 +149,11 @@ class Enum:
 
 
 class QMetaMethod:
-    c_struct = [("name", FF_DATA | FF_DWRD),
-                ("parameterCount", FF_DATA | FF_DWRD),
-                ("typesDataIndex", FF_DATA | FF_DWRD),
-                ("tag", FF_DATA | FF_DWRD),
-                ("flag", FF_DATA | FF_DWRD)]
+    c_struct = [("name", FF_DATA | ida_bytes.FF_DWORD),
+                ("parameterCount", FF_DATA | ida_bytes.FF_DWORD),
+                ("typesDataIndex", FF_DATA | ida_bytes.FF_DWORD),
+                ("tag", FF_DATA | ida_bytes.FF_DWORD),
+                ("flag", FF_DATA | ida_bytes.FF_DWORD)]
     PropertyFlags = Enum(
         Invalid=0x00000000, Readable=0x00000001, Writable=0x00000002, Resettable=0x00000004,
         EnumOrFlag=0x00000008, StdCppSet=0x00000100, Override=0x00000200, Constant=0x00000400,
@@ -198,15 +203,15 @@ class QMetaMethod:
         return cmmt
 
     def get_type(self, type_off, str_data_off):
-        MakeUnknown(type_off, 4, DOUNK_EXPAND)
-        type_info = Dword(type_off)
+        ida_bytes.del_items(type_off, 4, ida_bytes.DELIT_EXPAND)
+        type_info = idc.get_wide_dword(type_off)
         if type_info in QMetaMethod.QMetaType_map:
             t = self.QMetaType_map[type_info]
         elif type_info & 0x80000000:
             type_info &= 0x7FFFFFFF
             t = str_data_off[type_info].string
-        MakeComm(type_off, t)
-        MakeDword(type_off)
+        idc.set_cmt(type_off, t, 0)
+        ida_bytes.create_data(type_off, ida_bytes.FF_DWORD, 4, ida_idaapi.BADADDR)
         return t
 
     def __init__(self, off, data_off, str_data_off):
@@ -227,29 +232,29 @@ class QMetaMethod:
         paras_name_off = paras_type_off + self.parameterCount * 4
         for i in range(self.parameterCount):
             para_name_off = paras_name_off + i * 4
-            MakeUnknown(para_name_off, 4, DOUNK_EXPAND)
-            MakeDword(para_name_off)
-            para_name = str_data_off[Dword(para_name_off)].string
-            MakeComm(para_name_off, para_name)
+            ida_bytes.del_items(para_name_off, 4, ida_bytes.DELIT_EXPAND)
+            ida_bytes.create_data(para_name_off, ida_bytes.FF_DWORD, 4, ida_idaapi.BADADDR)
+            para_name = str_data_off[idc.get_wide_dword(para_name_off)].string
+            idc.set_cmt(para_name_off, para_name, 0)
             para_name_strs.append(para_name)
 
         paras_strs = map(lambda x, y: "%s %s" % (x, y), para_type_strs, para_name_strs)
-        MakeComm(off, "%s %s %s(%s)" % (self.get_type_str(), ret_type_str,
-            str_data_off[self.name].string, ", ".join(paras_strs)))
+        idc.set_cmt(off, "%s %s %s(%s)" % (self.get_type_str(), ret_type_str,
+            str_data_off[self.name].string, ", ".join(paras_strs)), 0)
 
 
 def get_bytes_size(data_flag):
-    if isByte(data_flag):
+    if ida_bytes.is_byte(data_flag):
         bytes_len = 1
-    elif isWord(data_flag):
+    elif ida_bytes.is_word(data_flag):
         bytes_len = 2
-    elif isDwrd(data_flag):
+    elif ida_bytes.is_dword(data_flag):
         bytes_len = 4
-    elif isQwrd(data_flag):
+    elif ida_bytes.is_qword(data_flag):
         bytes_len = 8
     return bytes_len
 
-type_maker = {1: Byte, 2: Word, 4: Dword, 8: Qword}
+type_maker = {1: idc.get_wide_byte, 2: 	idc.get_wide_word, 4: idc.get_wide_dword, 8: idc.get_qword}
 
 def struct_map(obj, stru, off):
     for member in stru:
@@ -270,12 +275,12 @@ struct QMetaObject::d { // private data
     void *extradata; //reserved for future use
 } d;
 """
-    c_struct = [("superdata", offflag() | FF_DATA | ARCH_F),
-                ("stringdata", offflag() | FF_DATA | ARCH_F),
-                ("data", offflag() | FF_DATA | ARCH_F),
-                ("metacall", offflag() | FF_DATA | ARCH_F),
-                ("relatedMetaObjects", offflag() | FF_DATA | ARCH_F),
-                ("extradata", offflag() | FF_DATA | ARCH_F)]
+    c_struct = [("superdata", ida_bytes.off_flag() | FF_DATA | ARCH_F),
+                ("stringdata", ida_bytes.off_flag() | FF_DATA | ARCH_F),
+                ("data", ida_bytes.off_flag() | FF_DATA | ARCH_F),
+                ("metacall", ida_bytes.off_flag() | FF_DATA | ARCH_F),
+                ("relatedMetaObjects", ida_bytes.off_flag() | FF_DATA | ARCH_F),
+                ("extradata", ida_bytes.off_flag() | FF_DATA | ARCH_F)]
 
     def __init__(self, offset):
         struct_map(self, self.c_struct, offset)
@@ -305,27 +310,29 @@ static inline const QByteArray stringData(const QMetaObject *mo, int index)
 }
 
 """
-    if __EA64__:
+    if idc.__EA64__:
         size = 24
     else:
         size = 16
 
-    c_struct = [("ref", FF_DATA | FF_DWRD),
+    c_struct = [("ref", FF_DATA | ida_bytes.FF_DWORD),
             ("size", FF_DATA | ARCH_F),
-            ("alloc__capRved", FF_DATA | FF_DWRD),
+            ("alloc__capRved", FF_DATA | ida_bytes.FF_DWORD),
             ("offset", FF_DATA | ARCH_F) ]
 
 
     def __init__(self, beg_off):
         struct_map(self, self.c_struct, beg_off)
         struct_maker(self, beg_off)
-        self.string = GetString(beg_off + self.offset)
+        self.string = idc.get_strlit_contents(beg_off + self.offset, -1)
+        if self.string is not None:
+            self.string = self.string.decode('utf-8')
 
         alloc = 0x7FFFFFFF & self.alloc__capRved
         capacityReserved = self.alloc__capRved >> 31
 
         cmmt = "String: %s, alloc: %d, capRvrsd %d" % (self.string, capacityReserved, alloc)
-        MakeComm(beg_off, cmmt)
+        idc.set_cmt(beg_off, cmmt, 0)
 
 
     def __repr__(self):
@@ -333,6 +340,7 @@ static inline const QByteArray stringData(const QMetaObject *mo, int index)
 
 
 
-addrtoparse = ScreenEA()
+addrtoparse = idc.get_screen_ea()
+print(f"Addr to parse: {hex(addrtoparse)}")
 if addrtoparse != 0:
     displayMetaData(addrtoparse)
