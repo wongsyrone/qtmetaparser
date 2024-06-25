@@ -2,9 +2,9 @@
 #Python 3.11.7 (tags/v3.11.7:fa7a6f2, Dec  4 2023, 19:24:49) [MSC v.1937 64 bit (AMD64)] 
 #IDAPython v7.4.0 final (serial 0) (c) The IDAPython Team <idapython@googlegroups.com>
 
-# handle static metaObject
 import idc
 import ida_bytes
+import ida_xref
 
 
 if idc.__EA64__:
@@ -12,6 +12,8 @@ if idc.__EA64__:
 else:
     ARCH_F = ida_bytes.FF_DWORD | FF_DATA
 
+
+type_maker = {1: idc.get_wide_byte, 2:  idc.get_wide_word, 4: idc.get_wide_dword, 8: idc.get_qword}
 
 def struct_adder(cls, mapper):
     if ida_struct.get_struc_id(cls.__name__) == BADADDR:
@@ -104,26 +106,186 @@ ConstructorCount: %d SignalCount: %d""" % (str_data[self.className].string,
         # idaapi.run_statements(S)
         idc.set_cmt(offset, cmmt, 0)
 
-def displayMetaData(data_addr):
-    parser = QtMetaParser(data_addr)
-    parser.make_qmetaobjecprivate()
-    pass
+
+def displayMetaDataForStaticMetaObj():
+    # get import entry
+    def getImpStaticMetaObjectFromIdata():
+        import ida_nalt
+        staticMetaObject_imp_idata_eas = []
+
+        nimps = ida_nalt.get_import_module_qty()
+        
+        for i in range(nimps):
+            name = ida_nalt.get_import_module_name(i)
+            if not name:
+                print("Failed to get import module name for #%d" % i)
+                name = "<unnamed>"
+            if name != "Qt5Core":
+                continue
+        
+            print("Walking imports for module name %s" % name)
+            def imp_cb(ea, name, ordinal):
+                nonlocal staticMetaObject_imp_idata_eas
+                # if not name:
+                #     print("%08x: ordinal #%d" % (ea, ordinal))
+                # else:
+                #     print("%08x: %s (ordinal #%d)" % (ea, name, ordinal))
+                # True -> Continue enumeration
+                # False -> Stop enumeration
+                # TODO: return supported xxx:staticMetaObject
+                if name == "?dynamicMetaObject@QObjectData@@QBEPAUQMetaObject@@XZ": # QObjectData::dynamicMetaObject(void)	Qt5Core
+                    staticMetaObject_imp_idata_eas.append(ea)
+                return True
+            ida_nalt.enum_import_names(i, imp_cb)
+        if len(staticMetaObject_imp_idata_eas) == 0:
+            raise Exception("not able to find xxx::dynamicMetaObject")
+        return staticMetaObject_imp_idata_eas
+    
+    
+    staticMetaObject_eas = getImpStaticMetaObjectFromIdata()
+    print("staticMetaObject_eas", staticMetaObject_eas)
+    for staticMetaObject_ea in staticMetaObject_eas:
+        xb = ida_xref.xrefblk_t()
+        for cref in xb.crefs_to(staticMetaObject_ea):
+            print(f"currCref is {hex(cref)}")
+            staticMetaObjArr = []
+            end = idc.get_func_attr(cref, FUNCATTR_END)
+            cur_addr = cref
+            while cur_addr < end:
+                if idc.print_insn_mnem(cur_addr).lower() == "mov":
+                    cur0_type = idc.get_operand_type(cur_addr, 0)
+                    cur0_value = idc.get_operand_value(cur_addr, 0)
+                    cur1_type = idc.get_operand_type(cur_addr, 1)
+                    cur1_value = idc.get_operand_value(cur_addr, 1)
+                    if cur0_type == o_displ and cur1_type == o_imm:  # mov     [ebp+var_8], offset off_66D574
+                        if idc.get_operand_value(cur1_value, 0) == o_displ:
+                            staticMetaObjArr.append(cur1_value)
+                cur_addr = idc.next_head(cur_addr,end)
+            print(f"staticMetaObjArr {staticMetaObjArr}")
+            if len(staticMetaObjArr) == 0:
+                print(f"no applicable staticMetaObj from {hex(cref)}")
+                continue
+            assert len(staticMetaObjArr) == 1
+            parser = QtMetaParser(d_offset=staticMetaObjArr[0], is_dynamic=False)
+            parser.make_qmetaobjecprivate()
+
+
+def displayMetaDataForDynamicMetaObj():
+    # get import entry
+    def getImpStaticMetaObjectFromIdata():
+        import ida_nalt
+        staticMetaObject_imp_idata_eas = []
+
+        nimps = ida_nalt.get_import_module_qty()
+        
+        for i in range(nimps):
+            name = ida_nalt.get_import_module_name(i)
+            if not name:
+                print("Failed to get import module name for #%d" % i)
+                name = "<unnamed>"
+            if not name.startswith("Qt5"):
+                continue
+        
+            print("Walking imports for module name %s" % name)
+            def imp_cb(ea, name, ordinal):
+                nonlocal staticMetaObject_imp_idata_eas
+                qclassNames = ["QObject", "QThread", "QWidget", "QGraphicsEffect", "QDialog", "QStyledItemDelegate", "QMenu", "QListWidget"]
+                # if not name:
+                #     print("%08x: ordinal #%d" % (ea, ordinal))
+                # else:
+                #     print("%08x: %s (ordinal #%d)" % (ea, name, ordinal))
+                # True -> Continue enumeration
+                # False -> Stop enumeration
+                # TODO: return supported xxx:staticMetaObject
+                if name.startswith("?staticMetaObject@"): # QObject::staticMetaObject
+                    for qclass in qclassNames:
+                        if qclass in name: staticMetaObject_imp_idata_eas.append(ea)
+                return True
+            ida_nalt.enum_import_names(i, imp_cb)
+        if len(staticMetaObject_imp_idata_eas) == 0:
+            raise Exception("not able to find xxx::staticMetaObject")
+        return staticMetaObject_imp_idata_eas
+    
+    
+    staticMetaObject_eas = getImpStaticMetaObjectFromIdata()
+    print("staticMetaObject_eas", staticMetaObject_eas)
+    for staticMetaObject_ea in staticMetaObject_eas:
+        xb = ida_xref.xrefblk_t()
+        for dref in xb.drefs_to(staticMetaObject_ea):
+            print(f"currDref is {hex(dref)}")
+            currFuncArry = []
+            end = idc.get_func_attr(dref, FUNCATTR_END)
+            cur_addr = dref
+            while cur_addr < end:
+                if idc.print_insn_mnem(cur_addr).lower() == "mov":
+                    prev_addr = idc.prev_head(cur_addr, dref)
+                    has_prev_addr = prev_addr != BADADDR
+                    cur0_type = idc.get_operand_type(cur_addr, 0)
+                    cur0_value = idc.get_operand_value(cur_addr, 0)
+                    cur1_type = idc.get_operand_type(cur_addr, 1)
+                    cur1_value = idc.get_operand_value(cur_addr, 1)
+                    if cur0_type == o_mem and cur1_type == o_reg:  # mov     dword_6D2B2C, eax
+                        if has_prev_addr:  # look back for mov  eax, ds:?staticMetaObject@QObject@@2UQMetaObject@@B
+                            prev0_type = idc.get_operand_type(prev_addr, 0)
+                            prev0_value = idc.get_operand_value(prev_addr, 0)
+                            prev1_type = idc.get_operand_type(prev_addr, 1)
+                            prev1_value = idc.get_operand_value(prev_addr, 1)
+                            if prev0_value == cur1_value and prev0_type == cur1_type:
+                                currFuncArry.append((cur0_value,prev1_value))
+                    if cur0_type == o_mem and cur1_type == o_imm:  # mov     dword_6D2B30, offset unk_670F84
+                        currFuncArry.append((cur0_value, cur1_value))
+                cur_addr = idc.next_head(cur_addr,end)
+            print(f"currFuncArry {currFuncArry}")  # [(loc, value), (loc, value)]
+            
+            parser = QtMetaParser(currFuncArr=currFuncArry, is_dynamic=True)
+            parser.make_qmetaobjecprivate()
 
 
 # TODO: when superdata is not null
 class QtMetaParser:
-    def __init__(self, d_offset):
-        self.d_offset = d_offset
-        self.d = QMetaObject__d(d_offset)
-        self.str_data = self.get_str_data(self.d.stringdata)
-        self.qmeta_obj_pri = QMetaObjectPrivate(self.d.data, self.str_data)
-        class_name = self.str_data[self.qmeta_obj_pri.className].string
-        class_spc = class_name + "::"
-        idc.set_name(d_offset, class_name, SN_CHECK)
-        idc.set_name(self.d.stringdata, class_spc + "stringdata", SN_CHECK)
-        idc.set_name(self.d.data, class_spc + "data", SN_CHECK)
-        if not idc.get_name(self.d.metacall, ida_name.GN_VISIBLE).startswith("nullsub"):
-            idc.set_name(self.d.metacall, class_spc + "metacall", SN_CHECK)
+    def __init__(self, *args, **kwargs):
+        is_dynamic = kwargs.get("is_dynamic")
+        if is_dynamic: # dynamicMetaObject
+            currFuncArr = kwargs.get("currFuncArr")
+            print("begin currFuncArr")
+            for tup in currFuncArr:
+                print(','.join('{:02X}'.format(tup_member) for tup_member in tup))
+            print("end currFuncArr")
+            dummy_offset = 0x1
+            self.d = QMetaObject__d(currFuncArr[0][0], False)
+
+            # fix QMetaObject__d location
+            for idx, member in enumerate(self.d.c_struct):
+                bytes_len = get_bytes_size(member[1])
+                setattr(self.d, member[0], currFuncArr[idx][1])
+                print(f"fixing {member[0]} to {hex(currFuncArr[idx][1])}")
+            print(vars(self.d))
+            self.d.make_struct(currFuncArr[0][0])
+            
+            self.str_data = self.get_str_data(self.d.stringdata)
+            print(self.str_data)
+            self.qmeta_obj_pri = QMetaObjectPrivate(self.d.data, self.str_data)
+            class_name = self.str_data[self.qmeta_obj_pri.className].string
+            class_spc = class_name + "::"
+            idc.set_name(currFuncArr[0][0], class_name, SN_CHECK)
+            idc.set_name(self.d.stringdata, class_spc + "stringdata", SN_CHECK)
+            idc.set_name(self.d.data, class_spc + "data", SN_CHECK)
+            if not idc.get_name(self.d.static_metacall, ida_name.GN_VISIBLE).startswith("nullsub"):
+                idc.set_name(self.d.static_metacall, class_spc + "static_metacall", SN_CHECK)
+        else:  # staticMetaObject
+            d_offset = kwargs.get("d_offset")
+            self.d_offset = d_offset
+            self.d = QMetaObject__d(d_offset)
+            self.d.make_struct(d_offset)
+            self.str_data = self.get_str_data(self.d.stringdata)
+            self.qmeta_obj_pri = QMetaObjectPrivate(self.d.data, self.str_data)
+            class_name = self.str_data[self.qmeta_obj_pri.className].string
+            class_spc = class_name + "::"
+            idc.set_name(d_offset, class_name, SN_CHECK)
+            idc.set_name(self.d.stringdata, class_spc + "stringdata", SN_CHECK)
+            idc.set_name(self.d.data, class_spc + "data", SN_CHECK)
+            if not idc.get_name(self.d.static_metacall, ida_name.GN_VISIBLE).startswith("nullsub"):
+                idc.set_name(self.d.static_metacall, class_spc + "static_metacall", SN_CHECK)
 
     @staticmethod
     def get_str_data(str_off):
@@ -254,7 +416,7 @@ def get_bytes_size(data_flag):
         bytes_len = 8
     return bytes_len
 
-type_maker = {1: idc.get_wide_byte, 2: 	idc.get_wide_word, 4: idc.get_wide_dword, 8: idc.get_qword}
+
 
 def struct_map(obj, stru, off):
     for member in stru:
@@ -268,8 +430,9 @@ class QMetaObject__d:
     """
 struct QMetaObject::d { // private data
     const QMetaObject *superdata;
-    const QByteArrayData *stringdata;
+    const QByteArrayData *stringdata;  // QArrayData
     const uint *data;
+    typedef void (*StaticMetacallFunction)(QObject *, QMetaObject::Call, int, void **);
     StaticMetacallFunction static_metacall;
     const QMetaObject * const *relatedMetaObjects;
     void *extradata; //reserved for future use
@@ -278,12 +441,16 @@ struct QMetaObject::d { // private data
     c_struct = [("superdata", ida_bytes.off_flag() | FF_DATA | ARCH_F),
                 ("stringdata", ida_bytes.off_flag() | FF_DATA | ARCH_F),
                 ("data", ida_bytes.off_flag() | FF_DATA | ARCH_F),
-                ("metacall", ida_bytes.off_flag() | FF_DATA | ARCH_F),
+                ("static_metacall", ida_bytes.off_flag() | FF_DATA | ARCH_F),
                 ("relatedMetaObjects", ida_bytes.off_flag() | FF_DATA | ARCH_F),
                 ("extradata", ida_bytes.off_flag() | FF_DATA | ARCH_F)]
 
-    def __init__(self, offset):
-        struct_map(self, self.c_struct, offset)
+    def __init__(self, offset, no_map = False):
+        if not no_map:  # no_map for dynamicMetaObject, we don't have real QMetaObject::d
+            struct_map(self, self.c_struct, offset)
+
+
+    def make_struct(self, offset):
         struct_maker(self, offset)
 
 
@@ -327,6 +494,8 @@ static inline const QByteArray stringData(const QMetaObject *mo, int index)
         self.string = idc.get_strlit_contents(beg_off + self.offset, -1)
         if self.string is not None:
             self.string = self.string.decode('utf-8')
+        else:
+            self.string = ""
 
         alloc = 0x7FFFFFFF & self.alloc__capRved
         capacityReserved = self.alloc__capRved >> 31
@@ -339,8 +508,5 @@ static inline const QByteArray stringData(const QMetaObject *mo, int index)
         return "%s" % self.string
 
 
-
-addrtoparse = idc.get_screen_ea()
-print(f"Addr to parse: {hex(addrtoparse)}")
-if addrtoparse != 0:
-    displayMetaData(addrtoparse)
+displayMetaDataForStaticMetaObj()
+displayMetaDataForDynamicMetaObj()
