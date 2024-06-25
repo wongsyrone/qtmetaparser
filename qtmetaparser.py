@@ -5,6 +5,7 @@
 import idc
 import ida_bytes
 import ida_xref
+import ida_name
 
 
 if idc.__EA64__:
@@ -240,6 +241,16 @@ def displayMetaDataForDynamicMetaObj():
             parser = QtMetaParser(currFuncArr=currFuncArry, is_dynamic=True)
             parser.make_qmetaobjecprivate()
 
+def fix_thunk_func_name(ea, intendedName):
+    if idc.get_func_attr(ea, FUNCATTR_FLAGS) & FUNC_THUNK == FUNC_THUNK:
+        # thunk func, get real dest
+        func = idaapi.get_func(ea)
+        temp_ptr = idaapi.ea_pointer()
+        target_ea = idaapi.calc_thunk_func_target(func, temp_ptr.cast())
+        if target_ea != idaapi.BADADDR:
+            idc.set_name(target_ea, intendedName, ida_name.SN_FORCE)
+            idc.set_name(ea, "j_" + intendedName, ida_name.SN_FORCE)
+
 
 # TODO: when superdata is not null
 class QtMetaParser:
@@ -251,7 +262,6 @@ class QtMetaParser:
             for tup in currFuncArr:
                 print(','.join('{:02X}'.format(tup_member) for tup_member in tup))
             print("end currFuncArr")
-            dummy_offset = 0x1
             self.d = QMetaObject__d(currFuncArr[0][0], False)
 
             # fix QMetaObject__d location
@@ -271,7 +281,9 @@ class QtMetaParser:
             idc.set_name(self.d.stringdata, class_spc + "stringdata", SN_CHECK)
             idc.set_name(self.d.data, class_spc + "data", SN_CHECK)
             if not idc.get_name(self.d.static_metacall, ida_name.GN_VISIBLE).startswith("nullsub"):
+                idc.set_name(self.d.static_metacall, "", SN_CHECK)
                 idc.set_name(self.d.static_metacall, class_spc + "static_metacall", SN_CHECK)
+                fix_thunk_func_name(self.d.static_metacall, class_spc + "static_metacall")
         else:  # staticMetaObject
             d_offset = kwargs.get("d_offset")
             self.d_offset = d_offset
@@ -285,7 +297,9 @@ class QtMetaParser:
             idc.set_name(self.d.stringdata, class_spc + "stringdata", SN_CHECK)
             idc.set_name(self.d.data, class_spc + "data", SN_CHECK)
             if not idc.get_name(self.d.static_metacall, ida_name.GN_VISIBLE).startswith("nullsub"):
+                idc.set_name(self.d.static_metacall, "", SN_CHECK)
                 idc.set_name(self.d.static_metacall, class_spc + "static_metacall", SN_CHECK)
+                fix_thunk_func_name(self.d.static_metacall, class_spc + "static_metacall")
 
     @staticmethod
     def get_str_data(str_off):
@@ -302,8 +316,9 @@ class QtMetaParser:
         method_data = []
         for off in range(start, start + 4 * 5 * self.qmeta_obj_pri.methodCount, 4 * 5):
             qmthd = QMetaMethod(off, self.d.data, self.str_data)
-            # MakeComm(qmthd.offset, "METHOD_%d " % len(method_data) + Comment(qmthd.offset))
+            idc.set_cmt(qmthd.offset, "METHOD_%d " % len(method_data) + idc.get_cmt(qmthd.offset, 0), 0)
             method_data.append(qmthd)
+        print(f"QMetaMethod {method_data}")
 
 
 class Enum:
