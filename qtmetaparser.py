@@ -237,7 +237,9 @@ def displayMetaDataForDynamicMetaObj():
                         currFuncArry.append((cur0_value, cur1_value))
                 cur_addr = idc.next_head(cur_addr,end)
             print(f"currFuncArry {currFuncArry}")  # [(loc, value), (loc, value)]
-            
+            if len(currFuncArry) == 0:
+                print(f"no applicable dynamicMetaObj from {hex(dref)}")
+                continue
             parser = QtMetaParser(currFuncArr=currFuncArry, is_dynamic=True)
             parser.make_qmetaobjecprivate()
 
